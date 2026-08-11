@@ -393,6 +393,18 @@ select:disabled { color: var(--ink-muted); }
 /* ---------- Footer ---------- */
 
 footer { margin-top: 36px; color: var(--ink-muted); font-size: 0.84rem; }
+
+.footer-links { margin-top: 20px; text-align: center; }
+.footer-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-muted);
+  text-decoration: none;
+  font-size: 0.82rem;
+  transition: color 0.15s;
+}
+.footer-links a:hover { color: var(--ink-2); }
 footer summary { cursor: pointer; }
 footer summary:hover { color: var(--ink-2); }
 #methodology { padding: 14px 4px; }

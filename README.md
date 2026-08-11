@@ -1,5 +1,7 @@
 # 🎙️ Microphone Test
 
+**Live: https://vaaaaanquish.github.io/MicrophoneTest/**
+
 A static web app that scores how clear you sound: pick a microphone, speak for a few
 seconds, and get a literature-based quality assessment.
 No build step, fully client-side — the recording never leaves your browser.
