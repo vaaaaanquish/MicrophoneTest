@@ -34,6 +34,7 @@ async function requestPermissionAndList() {
     await refreshDeviceList();
     permissionBtn.classList.add('hidden');
     recordBtn.disabled = false;
+    startMonitor();
   } catch (err) {
     recordStatus.textContent = t('err_denied', { msg: err.message });
   }
@@ -64,14 +65,14 @@ async function refreshDeviceList() {
 
 micSelect.addEventListener('change', () => {
   if (micSelect.value) localStorage.setItem(MIC_STORAGE_KEY, micSelect.value);
+  restartMonitor();
 });
+rawModeCheck.addEventListener('change', restartMonitor);
 
 navigator.mediaDevices.addEventListener('devicechange', refreshDeviceList);
 
-// ---------- Recording ----------
-
-async function startRecording() {
-  const constraints = {
+function buildConstraints() {
+  return {
     audio: {
       deviceId: micSelect.value ? { exact: micSelect.value } : undefined,
       echoCancellation: !rawModeCheck.checked,
@@ -80,11 +81,79 @@ async function startRecording() {
       channelCount: 1,
     },
   };
+}
+
+// ---------- Live monitor (visualizer active before recording) ----------
+
+let monitorCtx = null;
+let monitorStream = null;
+let monitorAnimId = 0;
+
+async function startMonitor() {
+  if (recording || monitorCtx) return;
+  try {
+    monitorStream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+  } catch {
+    return; // device busy or denied — just skip monitoring
+  }
+  // Recording may have started while getUserMedia was pending.
+  if (recording || monitorCtx) {
+    monitorStream.getTracks().forEach((tr) => tr.stop());
+    monitorStream = null;
+    return;
+  }
+  monitorCtx = new AudioContext();
+  if (monitorCtx.state === 'suspended') {
+    // Without a user gesture (e.g. permission remembered from a previous visit),
+    // the context starts suspended — resume on the first interaction.
+    const resume = () => { if (monitorCtx) monitorCtx.resume(); };
+    document.addEventListener('pointerdown', resume, { once: true });
+    document.addEventListener('keydown', resume, { once: true });
+  }
+  const source = monitorCtx.createMediaStreamSource(monitorStream);
+  analyserNode = monitorCtx.createAnalyser();
+  analyserNode.fftSize = 4096;
+  analyserNode.smoothingTimeConstant = 0.72;
+  initSpectrumBars(monitorCtx.sampleRate);
+  source.connect(analyserNode);
+  monitorLoop();
+}
+
+function stopMonitor() {
+  cancelAnimationFrame(monitorAnimId);
+  if (monitorStream) {
+    monitorStream.getTracks().forEach((tr) => tr.stop());
+    monitorStream = null;
+  }
+  if (monitorCtx) {
+    monitorCtx.close();
+    monitorCtx = null;
+  }
+}
+
+function restartMonitor() {
+  if (recording) return;
+  stopMonitor();
+  startMonitor();
+}
+
+function monitorLoop() {
+  if (!monitorCtx || recording) return;
+  drawFrame();
+  monitorAnimId = requestAnimationFrame(monitorLoop);
+}
+
+// ---------- Recording ----------
+
+async function startRecording() {
+  // Release the monitor stream first — the device may not open twice.
+  stopMonitor();
 
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    mediaStream = await navigator.mediaDevices.getUserMedia(buildConstraints());
   } catch (err) {
     recordStatus.textContent = t('err_open', { msg: err.message });
+    startMonitor();
     return;
   }
 
@@ -151,6 +220,7 @@ async function stopRecording() {
   if (totalLen < sampleRate * 2) {
     recordStatus.textContent = t('err_short');
     recordBtn.disabled = false;
+    startMonitor();
     return;
   }
 
@@ -163,12 +233,14 @@ async function stopRecording() {
     // The analysis module throws i18n keys (t() returns unknown keys verbatim).
     recordStatus.textContent = t('err_analysis', { msg: t(err.message) });
     recordBtn.disabled = false;
+    startMonitor();
     return;
   }
 
   renderResult(result, samples, sampleRate);
   recordStatus.textContent = '';
   recordBtn.disabled = false;
+  startMonitor();
 }
 
 // ---------- Live drawing ----------
@@ -255,18 +327,9 @@ function drawSpectrum(ctx, w, h) {
   ctx.stroke();
 }
 
-function drawLoop() {
-  if (!recording) return;
-  const elapsed = (performance.now() - recordStartTime) / 1000;
-  const remain = Math.max(0, RECORD_SECONDS - elapsed).toFixed(0);
-
-  if (elapsed < SILENCE_GUIDE_SEC) {
-    recordStatus.textContent = t('status_quiet', { s: remain });
-  } else {
-    recordStatus.textContent = t('status_speak', { s: remain });
-  }
-
-  // Spectrum + waveform overlay.
+// One visualizer frame: spectrum + waveform overlay + level meter.
+// Shared by the recording loop and the idle monitor loop.
+function drawFrame() {
   const ctx = waveformCanvas.getContext('2d');
   drawSpectrum(ctx, waveformCanvas.width, waveformCanvas.height);
 
@@ -279,7 +342,20 @@ function drawLoop() {
   const db = 20 * Math.log10(rms + 1e-10);
   const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
   levelBar.style.width = `${pct}%`;
+}
 
+function drawLoop() {
+  if (!recording) return;
+  const elapsed = (performance.now() - recordStartTime) / 1000;
+  const remain = Math.max(0, RECORD_SECONDS - elapsed).toFixed(0);
+
+  if (elapsed < SILENCE_GUIDE_SEC) {
+    recordStatus.textContent = t('status_quiet', { s: remain });
+  } else {
+    recordStatus.textContent = t('status_speak', { s: remain });
+  }
+
+  drawFrame();
   animationId = requestAnimationFrame(drawLoop);
 }
 
@@ -429,7 +505,8 @@ initI18n(() => {
 });
 document.getElementById('methodology').innerHTML = getMethodologyHtml();
 
-// If permission was already granted, populate the device list on page load.
+// If permission was already granted, populate the device list on page load
+// and start the idle monitor right away.
 (async () => {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -437,6 +514,7 @@ document.getElementById('methodology').innerHTML = getMethodologyHtml();
       await refreshDeviceList();
       permissionBtn.classList.add('hidden');
       recordBtn.disabled = false;
+      startMonitor();
     }
   } catch { /* noop */ }
 })();
