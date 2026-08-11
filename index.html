@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Microphone Test</title>
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="stylesheet" href="style.css?v=12">
+</head>
+<body>
+  <main class="container">
+    <div class="lang-switch">
+      <button data-lang="ja">日本語</button>
+      <button data-lang="en">EN</button>
+    </div>
+
+    <header>
+      <h1><img src="icon.svg" alt="" class="logo">Microphone Test</h1>
+      <p class="subtitle" data-i18n="subtitle">マイクを選んで数秒話すだけで、音声の明瞭さをスコアリングします</p>
+    </header>
+
+    <!-- Step 1: select a microphone -->
+    <section class="card" id="setup-card">
+      <h2><span class="step-num">1</span> <span data-i18n="step_mic">マイクを選択</span></h2>
+      <div class="mic-row">
+        <button id="permission-btn" class="btn btn-primary" data-i18n="btn_permission">🎤 マイクを許可</button>
+        <select id="mic-select" disabled>
+          <option data-i18n="opt_placeholder">← まずマイクへのアクセスを許可してください</option>
+        </select>
+      </div>
+      <label class="checkbox-label">
+        <input type="checkbox" id="raw-mode" checked>
+        <span data-i18n="raw_mode">ブラウザの補正（ノイズ抑制・エコーキャンセル・自動ゲイン）を無効にして素の音を測る</span>
+      </label>
+    </section>
+
+    <!-- Step 2: record -->
+    <section class="card" id="record-card">
+      <h2><span class="step-num">2</span> <span data-i18n="step_record">録音してチェック</span></h2>
+      <p class="hint" data-i18n-html="hint_html"></p>
+      <div class="record-controls">
+        <button id="record-btn" class="btn btn-primary" data-i18n="btn_record" disabled>● 録音開始</button>
+        <div class="record-status" id="record-status"></div>
+      </div>
+      <div class="meter-wrap">
+        <canvas id="waveform" width="1024" height="180"></canvas>
+        <div class="level-meter">
+          <div class="level-bar" id="level-bar"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 3: results -->
+    <section class="card hidden" id="result-card">
+      <h2><span class="step-num">3</span> <span data-i18n="step_result">結果</span></h2>
+      <div class="overall-score">
+        <div class="score-ring" id="score-ring">
+          <div class="score-inner">
+            <span class="value" id="overall-score">–</span>
+            <small>/ 100</small>
+          </div>
+        </div>
+        <div class="overall-verdict">
+          <div id="overall-label" class="verdict-label">–</div>
+          <div id="overall-desc" class="verdict-desc"></div>
+          <div class="player-row">
+            <audio id="playback" controls></audio>
+            <label class="checkbox-label">
+              <input type="checkbox" id="normalize-playback" checked>
+              <span data-i18n="normalize">音量を上げて再生</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="metrics-grid" id="metrics-grid"></div>
+
+      <div class="advice-section">
+        <h3 data-i18n="advice_title">💡 改善ポイント</h3>
+        <ul id="advice-list"></ul>
+      </div>
+
+      <button id="retry-btn" class="btn btn-secondary" data-i18n="btn_retry">もう一度測定する</button>
+    </section>
+
+    <footer>
+      <details>
+        <summary data-i18n="methodology_summary">スコアリングの根拠について</summary>
+        <div id="methodology"></div>
+      </details>
+    </footer>
+  </main>
+
+  <!-- ?v= is a cache buster; bump it whenever js/css change -->
+  <script type="module" src="app.js?v=12"></script>
+</body>
+</html>
