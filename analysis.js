@@ -1,4 +1,4 @@
-import { getLang } from './i18n.js?v=12';
+import { getLang } from './i18n.js?v=14';
 
 // Speech quality analysis module.
 // Metrics and thresholds are based on the literature and standards summarized in docs/RESEARCH.md:
@@ -209,6 +209,120 @@ function estimateReverb(frameDbs, noiseFloorDb, speechLevelDb, hopMs) {
 // RT60 to C50 (clarity index) conversion via the Polack exponential-decay model.
 function rt60ToC50(rt60) {
   return 10 * Math.log10(Math.exp((13.8 * 0.05) / rt60) - 1);
+}
+
+// ---------- Deep reverb diagnostics (experimental, local branch only) ----------
+
+// dB envelope of a frequency band on the shared frame grid.
+// Two cascaded RBJ biquad bandpasses (~24 dB/oct skirts) — steep edges matter here:
+// a long low-band tail leaking into the high band would dominate its late decay
+// and inflate the high-band RT60 estimate.
+function bandFrameDbs(samples, sampleRate, frames, f1, f2) {
+  const f0 = Math.sqrt(f1 * f2);
+  const Q = f0 / (f2 - f1);
+  const w0 = (2 * Math.PI * f0) / sampleRate;
+  const alpha = Math.sin(w0) / (2 * Q);
+  const a0 = 1 + alpha;
+  const b0 = alpha / a0, b2 = -alpha / a0;
+  const a1 = (-2 * Math.cos(w0)) / a0, a2 = (1 - alpha) / a0;
+
+  let band = samples;
+  for (let pass = 0; pass < 2; pass++) {
+    const y = new Float32Array(samples.length);
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < band.length; i++) {
+      const x = band[i];
+      const v = b0 * x + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x;
+      y2 = y1; y1 = v;
+      y[i] = v;
+    }
+    band = y;
+  }
+  return frames.map((f) => frameRmsDb(band, f));
+}
+
+// Subband RT60: furniture/curtains absorb mid-high frequencies selectively, so a
+// high/low RT60 ratio ≥ 1 suggests a bare/hard room, < 0.8 a low-heavy (large) room.
+function subbandReverb(samples, sampleRate, frames) {
+  const out = {};
+  for (const [key, f1, f2] of [['low', 250, 800], ['high', 1500, 4000]]) {
+    const dbs = bandFrameDbs(samples, sampleRate, frames, f1, f2);
+    const sorted = [...dbs].sort((a, b) => a - b);
+    const r = estimateReverb(dbs, percentile(sorted, 0.1), percentile(sorted, 0.95), HOP_MS);
+    // Require several decay events per band — single-event estimates carry
+    // enough variance to flip the room-type diagnosis.
+    out[key] = r && r.eventCount >= 4 ? r.rt60 : null;
+  }
+  return out;
+}
+
+// DRR estimate from the level drop 80 ms after decay-origin peaks.
+// Physics: running speech sits at direct+reverb; at the offset the direct part
+// vanishes, so drop(80ms) = 10·log10(1 + 10^(DRR/10)) + tail decay over 80 ms.
+// Inverting gives a rough direct-to-reverberant ratio.
+function estimateDrr(frameDbs, speechLevelDb, rt60) {
+  const drops = [];
+  for (let i = 1; i < frameDbs.length - 30; i++) {
+    if (frameDbs[i] < speechLevelDb - 6) continue;
+    // True offset anchor: the LAST high-level frame — everything in the next
+    // 80 ms stays below it (mid-burst peaks would still be followed by speech).
+    let falling = true;
+    for (let j = i + 1; j <= i + 8; j++) {
+      if (frameDbs[j] > frameDbs[i] - 2) { falling = false; break; }
+    }
+    if (!falling) continue;
+    // And a deep sustained fall follows (not a syllabic dip).
+    let minv = Infinity;
+    for (let j = i + 1; j <= i + 30; j++) minv = Math.min(minv, frameDbs[j]);
+    if (frameDbs[i] - minv < 12) continue;
+    drops.push(frameDbs[i] - frameDbs[i + 8]); // drop at +80 ms
+    i += 30;
+  }
+  if (drops.length < 3) return null;
+  drops.sort((a, b) => a - b);
+  const medianDrop = percentile(drops, 0.5);
+  const x = medianDrop - (60 * 0.08) / rt60; // remove expected tail decay
+  return 10 * Math.log10(Math.max(Math.pow(10, x / 10) - 1, 0.01));
+}
+
+// Near-reflection detection: a strong single reflection at delay τ imprints a comb
+// ripple on the speech LTAS; correlate the log spectrum with cos(2πfτ).
+// τ is limited to 0.8-3.5 ms (below the voice-pitch quefrency, 1/F0 ≥ ~4 ms),
+// i.e. reflectors within ~60 cm such as the desk surface or a monitor.
+function detectNearReflection(ltas) {
+  if (!ltas) return null;
+  const { speechSpec, binHz } = ltas;
+  const b0 = Math.ceil(150 / binHz);
+  const b1 = Math.floor(6000 / binHz);
+  const logs = [];
+  let mean = 0;
+  for (let b = b0; b <= b1; b++) {
+    const v = Math.log(speechSpec[b] + 1e-20);
+    logs.push(v);
+    mean += v;
+  }
+  mean /= logs.length;
+
+  // Correlate over a wider range (0.8-8 ms) for baseline statistics,
+  // but only accept peaks in the pitch-safe 0.8-3.5 ms window.
+  const vals = [];
+  for (let tau = 0.8; tau <= 8; tau += 0.05) {
+    let c = 0;
+    for (let k = 0; k < logs.length; k++) {
+      c += (logs[k] - mean) * Math.cos((2 * Math.PI * (b0 + k) * binHz * tau) / 1000);
+    }
+    vals.push([tau, c / logs.length]);
+  }
+  const m = vals.reduce((s, v) => s + v[1], 0) / vals.length;
+  const sd = Math.sqrt(vals.reduce((s, v) => s + (v[1] - m) ** 2, 0) / vals.length);
+  let best = null;
+  for (const [tau, c] of vals) {
+    if (tau > 3.5) break;
+    if (!best || c > best.c) best = { tau, c };
+  }
+  if (!best || sd === 0) return null;
+  return { tauMs: best.tau, z: (best.c - m) / sd };
 }
 
 // Dropout detection (proxy for NISQA's Discontinuity dimension; approach of US patent 11183202):
@@ -598,6 +712,7 @@ export function analyzeRecording(samples, sampleRate) {
   const speechLevel = computeSpeechLevel(samples, frames, isSpeech);
   const snrResult = computeSnr(samples, frames, isSpeech);
   const snr = snrResult ? snrResult.snr : null;
+  const ltas = computeLtas(samples, sampleRate, frames, isSpeech);
 
   // --- 1. Noise (SNR): thresholds 30/20/10 dB ---
   if (snr !== null) {
@@ -623,25 +738,66 @@ export function analyzeRecording(samples, sampleRate) {
   // --- 2. Reverb (RT60): thresholds 0.3/0.5/0.7 s (ANSI S12.60 / WELL v2) ---
   const reverbResult = estimateReverb(frameDbs, noiseFloorDb, speechLevel ?? -20, HOP_MS);
   const lowSnrForReverb = snr !== null && snr < 15;
+  // Experimental deep diagnostics: near reflection is meaningful even without a long tail.
+  const reflection = detectNearReflection(ltas);
+  const strongReflection = reflection !== null && reflection.z >= 6;
   if (reverbResult && !lowSnrForReverb) {
     const { rt60, eventCount } = reverbResult;
     const score = interpScore(rt60, [[0.2, 100], [0.3, 80], [0.5, 60], [0.7, 40], [1.2, 10]]);
     const rating = ratingFromScore(score);
     const c50 = rt60ToC50(rt60);
+
+    // A strong comb (near reflection) corrupts band envelopes, so skip subband
+    // analysis in that case (lab finding: low-band RT60 blew up under a 4 ms comb).
+    const bands = strongReflection ? {} : subbandReverb(samples, sampleRate, frames);
+    const hasBands = bands.low != null && bands.high != null;
+
     metrics.push({
       key: 'reverb',
       nameKey: 'm_reverb',
       score, rating,
       value: { key: 'm_reverb_value', params: { ms: (rt60 * 1000).toFixed(0) } },
-      note: {
-        key: 'm_reverb_note',
-        params: { c50: c50.toFixed(1) },
-        extra: eventCount < 5 ? 'extra_few_decays' : null,
-      },
+      note: hasBands
+        ? {
+            key: 'm_reverb_note_bands',
+            params: {
+              c50: c50.toFixed(1),
+              lo: (bands.low * 1000).toFixed(0),
+              hi: (bands.high * 1000).toFixed(0),
+            },
+            extra: eventCount < 5 ? 'extra_few_decays' : null,
+          }
+        : {
+            key: 'm_reverb_note',
+            params: { c50: c50.toFixed(1) },
+            extra: eventCount < 5 ? 'extra_few_decays' : null,
+          },
       weight: 0.25,
     });
+
     if (rating === 'poor' || rating === 'fair') {
-      advice.push({ metric: 'a_reverb', key: 'adv_reverb' });
+      // Cause-specific advice when the subband ratio is conclusive; generic otherwise.
+      let advKey = 'adv_reverb', advParams;
+      if (hasBands) {
+        // Margins around 1.0 leave an inconclusive zone — blind subband estimates
+        // carry ±30% variance, so only clearly skewed ratios get a specific verdict.
+        const ratio = bands.high / bands.low;
+        if (ratio >= 1.15) {
+          advKey = 'adv_room_hard';
+          advParams = { ratio: ratio.toFixed(2) };
+        } else if (ratio < 0.8 && ratio > 0.45) {
+          advKey = 'adv_room_lowheavy';
+          advParams = { ratio: ratio.toFixed(2) };
+        }
+      }
+      advice.push({ metric: 'a_reverb', key: advKey, params: advParams });
+
+      // Mic-distance suspicion: DRR below ~2 dB means the mic sits at or beyond
+      // the critical distance — moving closer is the dominant fix.
+      const drrEst = estimateDrr(frameDbs, speechLevel ?? -20, rt60);
+      if (drrEst !== null && drrEst < 2) {
+        advice.push({ metric: 'a_mic_dist', key: 'adv_mic_far', params: { db: drrEst.toFixed(0) } });
+      }
     }
   } else {
     metrics.push({
@@ -652,6 +808,16 @@ export function analyzeRecording(samples, sampleRate) {
       value: { key: lowSnrForReverb ? 'm_reverb_noisy_value' : 'm_reverb_none_value' },
       note: { key: lowSnrForReverb ? 'm_reverb_noisy_note' : 'm_reverb_none_note' },
       weight: 0.1,
+    });
+  }
+
+  // Near-reflection advice (independent of the RT60 rating — a desk/monitor
+  // reflection colors the sound even in an otherwise dry room).
+  if (strongReflection) {
+    advice.push({
+      metric: 'a_reflection',
+      key: 'adv_near_reflection',
+      params: { cm: Math.round(reflection.tauMs * 17) },
     });
   }
 
@@ -697,7 +863,6 @@ export function analyzeRecording(samples, sampleRate) {
   }
 
   // --- 5. Frequency response: effective bandwidth (G.711/G.722) + alpha ratio (Byrne 1994) ---
-  const ltas = computeLtas(samples, sampleRate, frames, isSpeech);
   if (ltas) {
     const upperHz = computeBandwidth(ltas);
     const alpha = computeAlphaRatio(ltas);
