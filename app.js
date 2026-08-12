@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=14';
-import { t, initI18n } from './i18n.js?v=14';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=15';
+import { t, initI18n } from './i18n.js?v=15';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -368,6 +368,53 @@ function verdictClass(rating) {
 // Keep the last analysis result so the view can re-render on language switch.
 let lastRender = null;
 
+// Confetti burst for an overall "excellent" result. Lightweight canvas overlay,
+// self-removing after ~3 s.
+function celebrate() {
+  const cv = document.createElement('canvas');
+  cv.className = 'confetti';
+  cv.width = window.innerWidth;
+  cv.height = window.innerHeight;
+  document.body.appendChild(cv);
+  const ctx = cv.getContext('2d');
+  const colors = ['#0ca30c', '#3987e5', '#fab219', '#d55181', '#9085e9', '#34c98e'];
+  const parts = [];
+  for (let i = 0; i < 150; i++) {
+    parts.push({
+      x: cv.width / 2 + (Math.random() - 0.5) * cv.width * 0.35,
+      y: cv.height * 0.35,
+      vx: (Math.random() - 0.5) * 14,
+      vy: -7 - Math.random() * 10,
+      w: 5 + Math.random() * 6,
+      h: 8 + Math.random() * 8,
+      rot: Math.random() * Math.PI,
+      vr: (Math.random() - 0.5) * 0.35,
+      color: colors[i % colors.length],
+    });
+  }
+  const t0 = performance.now();
+  requestAnimationFrame(function tick(now) {
+    const t = (now - t0) / 1000;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.globalAlpha = Math.max(0, 1 - t / 2.6);
+    for (const p of parts) {
+      p.vy += 0.28;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.rot += p.vr;
+      p.vx *= 0.99;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    }
+    if (t < 2.8) requestAnimationFrame(tick);
+    else cv.remove();
+  });
+}
+
 let playbackUrls = { raw: null, normalized: null };
 
 function setPlaybackSource() {
@@ -455,7 +502,11 @@ function renderResult(result, samples, sampleRate, { scroll = true } = {}) {
     list.appendChild(li);
   }
 
-  if (scroll) resultCard.scrollIntoView({ behavior: 'smooth' });
+  if (scroll) {
+    resultCard.scrollIntoView({ behavior: 'smooth' });
+    // Fresh result only (not a language-switch re-render).
+    if (result.overallRating === 'excellent') celebrate();
+  }
 }
 
 // ---------- WAV encoding ----------

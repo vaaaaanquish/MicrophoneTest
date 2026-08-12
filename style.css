@@ -239,6 +239,13 @@ select:disabled { color: var(--ink-muted); }
 
 .hidden { display: none; }
 
+.confetti {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+}
+
 /* ---------- Results: hero ---------- */
 
 .overall-score {

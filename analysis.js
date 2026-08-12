@@ -1,4 +1,4 @@
-import { getLang } from './i18n.js?v=14';
+import { getLang } from './i18n.js?v=15';
 
 // Speech quality analysis module.
 // Metrics and thresholds are based on the literature and standards summarized in docs/RESEARCH.md:
