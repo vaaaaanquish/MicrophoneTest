@@ -36,8 +36,8 @@ const STR = {
     overall_desc: '推定MOS {mos} / 5.0 — {desc}',
     desc_excellent: 'オンライン会議・録音に十分な品質です。相手にクリアに聞こえます。',
     desc_good: '実用上は問題ないレベルです。改善ポイントに対応するとさらに良くなります。',
-    desc_fair: '聞き取りづらさを感じさせる可能性があります。改善ポイントを確認してください。',
-    desc_poor: '相手が聞き取りに苦労するレベルです。改善ポイントへの対応をおすすめします。',
+    desc_fair: '環境によっては聞き取りづらいことがあるかもしれません。気になるところから改善ポイントを試してみてください。',
+    desc_poor: '少し聞き取りづらい場面がありそうです。改善ポイントを試すと、ぐっと聞きやすくなるはずです。',
     points: '{n}点',
 
     m_snr: '🔇 ノイズ (SNR推定)',
@@ -155,8 +155,8 @@ const STR = {
     overall_desc: 'Estimated MOS {mos} / 5.0 — {desc}',
     desc_excellent: 'Great quality for online meetings and recording. You will sound clear.',
     desc_good: 'Perfectly usable. Addressing the tips below will make it even better.',
-    desc_fair: 'Listeners may find you hard to hear at times. Check the tips below.',
-    desc_poor: 'Listeners will likely struggle to understand you. Please address the tips below.',
+    desc_fair: 'In some situations you might be a little hard to hear. Feel free to try the tips below.',
+    desc_poor: 'There may be moments that are hard to catch — the tips below should make a big difference.',
     points: '{n} pts',
 
     m_snr: '🔇 Noise (SNR est.)',
