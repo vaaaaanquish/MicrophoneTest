@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=19';
-import { t, initI18n } from './i18n.js?v=19';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=20';
+import { t, initI18n } from './i18n.js?v=20';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -183,6 +183,7 @@ async function startRecording() {
   recordBtn.textContent = t('btn_stop');
   recordBtn.classList.add('recording');
   resultCard.classList.add('hidden');
+  document.getElementById('playback').pause();
 
   drawLoop();
   stopTimer = setTimeout(stopRecording, RECORD_SECONDS * 1000);
@@ -440,12 +441,14 @@ function celebrate(rating) {
 
 let playbackUrls = { raw: null, normalized: null };
 
-function setPlaybackSource() {
+// keepPosition: preserve the playhead when toggling normalize on the same
+// recording; a fresh recording must start from 0.
+function setPlaybackSource(keepPosition = true) {
   const playback = document.getElementById('playback');
   const normalize = document.getElementById('normalize-playback').checked;
   const url = normalize ? playbackUrls.normalized : playbackUrls.raw;
   if (url && playback.src !== url) {
-    const pos = playback.currentTime;
+    const pos = keepPosition ? playback.currentTime : 0;
     playback.src = url;
     playback.currentTime = pos;
   }
@@ -483,8 +486,9 @@ function renderResult(result, samples, sampleRate, { scroll = true } = {}) {
     normalized: URL.createObjectURL(encodeWav(normalized, sampleRate)),
   };
   const playback = document.getElementById('playback');
+  playback.pause();
   playback.removeAttribute('src');
-  setPlaybackSource();
+  setPlaybackSource(false);
 
   // Individual metrics.
   const grid = document.getElementById('metrics-grid');
