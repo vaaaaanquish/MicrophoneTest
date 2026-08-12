@@ -22,7 +22,10 @@ No build step, fully client-side — the recording never leaves your browser.
 | Overall | Weighted aggregation + weakest-link cap, MOS via the G.107 E-model formula | Hu & Loizou 2008 (P.835 regression) |
 
 A diagnostic layer additionally reports noise-type classification (spectral flatness),
-AGC pumping, and DC offset as improvement tips when detected.
+AGC pumping, and DC offset as improvement tips when detected. For reverberant rooms it
+digs deeper: subband RT60 (bare/hard room vs low-heavy large room), a blind
+direct-to-reverberant ratio (mic-too-far detection), and near-reflection detection via
+LTAS comb ripple (estimates the distance to a desk/monitor/wall reflector).
 
 ## Local development
 
