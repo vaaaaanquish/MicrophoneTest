@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=16';
-import { t, initI18n } from './i18n.js?v=16';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=17';
+import { t, initI18n } from './i18n.js?v=17';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -368,9 +368,14 @@ function verdictClass(rating) {
 // Keep the last analysis result so the view can re-render on language switch.
 let lastRender = null;
 
-// Confetti burst for an overall "excellent" result. Lightweight canvas overlay,
-// self-removing after ~3 s.
-function celebrate() {
+// Emoji suffix for the overall verdict only (metric badges stay clean).
+const RATING_EMOJI = { excellent: ' 🎉', good: ' 🎉', fair: ' 💪', poor: ' 🌱' };
+
+// Confetti for good/excellent overall results. Lightweight canvas overlay,
+// self-removing. "excellent" gets the big show: a center burst plus two
+// follow-up side cannons, more and larger pieces, longer lifetime.
+function celebrate(rating) {
+  const big = rating === 'excellent';
   const cv = document.createElement('canvas');
   cv.className = 'confetti';
   cv.width = window.innerWidth;
@@ -379,38 +384,56 @@ function celebrate() {
   const ctx = cv.getContext('2d');
   const colors = ['#0ca30c', '#3987e5', '#fab219', '#d55181', '#9085e9', '#34c98e'];
   const parts = [];
-  for (let i = 0; i < 150; i++) {
-    parts.push({
-      x: cv.width / 2 + (Math.random() - 0.5) * cv.width * 0.35,
-      y: cv.height * 0.35,
-      vx: (Math.random() - 0.5) * 14,
-      vy: -7 - Math.random() * 10,
-      w: 5 + Math.random() * 6,
-      h: 8 + Math.random() * 8,
-      rot: Math.random() * Math.PI,
-      vr: (Math.random() - 0.5) * 0.35,
-      color: colors[i % colors.length],
-    });
+  const life = big ? 3.4 : 2.6; // per-particle fade time [s]
+
+  function burst(cx, cy, count, vxBase, vxSpread, scale) {
+    const born = performance.now();
+    for (let i = 0; i < count; i++) {
+      parts.push({
+        x: cx + (Math.random() - 0.5) * cv.width * 0.05,
+        y: cy,
+        vx: vxBase + (Math.random() - 0.5) * vxSpread,
+        vy: -7 - Math.random() * 10 * scale,
+        w: (5 + Math.random() * 6) * scale,
+        h: (8 + Math.random() * 8) * scale,
+        rot: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 0.35,
+        color: colors[i % colors.length],
+        born,
+      });
+    }
   }
+
+  // Center burst (wider spawn area for the modest version).
+  if (big) {
+    burst(cv.width / 2, cv.height * 0.35, 220, 0, 22, 1.25);
+    setTimeout(() => burst(cv.width * 0.04, cv.height * 0.7, 110, 9, 8, 1.1), 400);  // left cannon →
+    setTimeout(() => burst(cv.width * 0.96, cv.height * 0.7, 110, -9, 8, 1.1), 800); // right cannon ←
+  } else {
+    burst(cv.width / 2, cv.height * 0.35, 140, 0, 14, 1);
+  }
+
+  const totalSec = big ? 4.8 : 2.8;
   const t0 = performance.now();
   requestAnimationFrame(function tick(now) {
-    const t = (now - t0) / 1000;
     ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.globalAlpha = Math.max(0, 1 - t / 2.6);
     for (const p of parts) {
+      const age = (now - p.born) / 1000;
+      if (age < 0 || age > life) continue;
       p.vy += 0.28;
       p.x += p.vx;
       p.y += p.vy;
       p.rot += p.vr;
       p.vx *= 0.99;
       ctx.save();
+      ctx.globalAlpha = Math.max(0, 1 - age / life);
       ctx.translate(p.x, p.y);
       ctx.rotate(p.rot);
       ctx.fillStyle = p.color;
       ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
       ctx.restore();
     }
-    if (t < 2.8) requestAnimationFrame(tick);
+    if ((now - t0) / 1000 < totalSec) requestAnimationFrame(tick);
     else cv.remove();
   });
 }
@@ -437,7 +460,8 @@ function renderResult(result, samples, sampleRate, { scroll = true } = {}) {
   document.getElementById('overall-score').textContent = score;
   ring.className = `score-ring ${verdictClass(result.overallRating)}`;
   ring.style.setProperty('--p', score);
-  document.getElementById('overall-label').textContent = t(`rating_${result.overallRating}`);
+  document.getElementById('overall-label').textContent =
+    t(`rating_${result.overallRating}`) + (RATING_EMOJI[result.overallRating] || '');
   document.getElementById('overall-desc').textContent = t('overall_desc', {
     mos: result.mos.toFixed(2),
     desc: t(`desc_${result.overallRating}`),
@@ -505,7 +529,9 @@ function renderResult(result, samples, sampleRate, { scroll = true } = {}) {
   if (scroll) {
     resultCard.scrollIntoView({ behavior: 'smooth' });
     // Fresh result only (not a language-switch re-render).
-    if (result.overallRating === 'excellent' || result.overallRating === 'good') celebrate();
+    if (result.overallRating === 'excellent' || result.overallRating === 'good') {
+      celebrate(result.overallRating);
+    }
   }
 }
 
