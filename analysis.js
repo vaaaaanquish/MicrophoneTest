@@ -1,4 +1,4 @@
-import { getLang } from './i18n.js?v=17';
+import { getLang } from './i18n.js?v=18';
 
 // Speech quality analysis module.
 // Metrics and thresholds are based on the literature and standards summarized in docs/RESEARCH.md:
@@ -203,7 +203,7 @@ function estimateReverb(frameDbs, noiseFloorDb, speechLevelDb, hopMs) {
   if (decays.length === 0) return null;
   decays.sort((a, b) => a - b);
   // The steep cutoff of the direct sound biases estimates low, so take an upper percentile.
-  return { rt60: percentile(decays, 0.7) / 1000, eventCount: decays.length };
+  return { rt60: percentile(decays, 0.7) / 1000, eventCount: decays.length, decays };
 }
 
 // RT60 to C50 (clarity index) conversion via the Polack exponential-decay model.
@@ -245,7 +245,7 @@ function bandFrameDbs(samples, sampleRate, frames, f1, f2) {
 // Subband RT60: furniture/curtains absorb mid-high frequencies selectively, so a
 // high/low RT60 ratio ≥ 1 suggests a bare/hard room, < 0.8 a low-heavy (large) room.
 function subbandReverb(samples, sampleRate, frames) {
-  const out = {};
+  const out = { decays: [] };
   for (const [key, f1, f2] of [['low', 250, 800], ['high', 1500, 4000]]) {
     const dbs = bandFrameDbs(samples, sampleRate, frames, f1, f2);
     const sorted = [...dbs].sort((a, b) => a - b);
@@ -253,6 +253,7 @@ function subbandReverb(samples, sampleRate, frames) {
     // Require several decay events per band — single-event estimates carry
     // enough variance to flip the room-type diagnosis.
     out[key] = r && r.eventCount >= 4 ? r.rt60 : null;
+    if (r) out.decays.push(...r.decays);
   }
   return out;
 }
@@ -617,16 +618,27 @@ function computeLtas(samples, sampleRate, frames, isSpeech) {
   const noiseSpec = new Float64Array(fftSize / 2);
   let speechN = 0, noiseN = 0;
 
+  // Prefer the initial silent stretch (before the first speech onset) for the
+  // noise spectrum: later non-speech frames contain the reverb tail, which is
+  // speech-shaped and makes the bandwidth criterion flicker between takes.
+  const firstSpeech = isSpeech.indexOf(true);
+  const initialLimit = firstSpeech > 0 ? frames[firstSpeech].start - fftSize : -1;
+  const useInitial = firstSpeech >= 30 && initialLimit > fftSize; // >= ~0.3 s of true ambient noise
+
   frames.forEach((f, idx) => {
     if (f.start + fftSize > samples.length) return;
-    const target = isSpeech[idx] ? speechSpec : noiseSpec;
-    if (isSpeech[idx] && speechN >= 300) return;
-    if (!isSpeech[idx] && noiseN >= 300) return;
+    let target = null;
+    if (isSpeech[idx]) {
+      if (speechN < 300) target = speechSpec;
+    } else if (useInitial ? f.start <= initialLimit : true) {
+      if (noiseN < 300) target = noiseSpec;
+    }
+    if (!target) return;
     const buf = new Float64Array(fftSize);
     for (let i = 0; i < fftSize; i++) buf[i] = samples[f.start + i] * window[i];
     const mags = fftMag(buf);
     for (let b = 0; b < mags.length; b++) target[b] += mags[b] * mags[b];
-    isSpeech[idx] ? speechN++ : noiseN++;
+    target === speechSpec ? speechN++ : noiseN++;
   });
 
   if (speechN === 0) return null;
@@ -736,20 +748,35 @@ export function analyzeRecording(samples, sampleRate) {
   }
 
   // --- 2. Reverb (RT60): thresholds 0.3/0.5/0.7 s (ANSI S12.60 / WELL v2) ---
-  const reverbResult = estimateReverb(frameDbs, noiseFloorDb, speechLevel ?? -20, HOP_MS);
+  const fullReverb = estimateReverb(frameDbs, noiseFloorDb, speechLevel ?? -20, HOP_MS);
   const lowSnrForReverb = snr !== null && snr < 15;
   // Experimental deep diagnostics: near reflection is meaningful even without a long tail.
   const reflection = detectNearReflection(ltas);
   const strongReflection = reflection !== null && reflection.z >= 6;
+
+  // A strong comb (near reflection) corrupts band envelopes, so skip subband
+  // analysis in that case (lab finding: low-band RT60 blew up under a 4 ms comb).
+  const bands = strongReflection ? { decays: [] } : subbandReverb(samples, sampleRate, frames);
+
+  // Pool decay events from the full band and both subbands (~3x more events):
+  // the estimate is a percentile over few samples, so a bigger pool cuts the
+  // run-to-run variance considerably. Only when the full-band estimator itself
+  // detected reverb — band-limited envelopes can fabricate slow decays from
+  // in-band noise fluctuations, which must not overrule a clean full-band "dry".
+  let reverbResult = fullReverb;
+  if (fullReverb) {
+    const pooled = [...fullReverb.decays, ...bands.decays];
+    if (pooled.length >= 4) {
+      pooled.sort((a, b) => a - b);
+      reverbResult = { rt60: percentile(pooled, 0.6) / 1000, eventCount: pooled.length };
+    }
+  }
+
   if (reverbResult && !lowSnrForReverb) {
     const { rt60, eventCount } = reverbResult;
     const score = interpScore(rt60, [[0.2, 100], [0.3, 80], [0.5, 60], [0.7, 40], [1.2, 10]]);
     const rating = ratingFromScore(score);
     const c50 = rt60ToC50(rt60);
-
-    // A strong comb (near reflection) corrupts band envelopes, so skip subband
-    // analysis in that case (lab finding: low-band RT60 blew up under a 4 ms comb).
-    const bands = strongReflection ? {} : subbandReverb(samples, sampleRate, frames);
     const hasBands = bands.low != null && bands.high != null;
 
     metrics.push({
@@ -822,9 +849,12 @@ export function analyzeRecording(samples, sampleRate) {
   }
 
   // --- 3. Recording level (P.56-style ASL): EBU R128 / podcast delivery targets ---
+  // The plateau is deliberately wide (-23 dBFS EBU broadcast through -12 dBFS
+  // podcast-hot) and the slopes gentle: natural take-to-take level variation is
+  // ±2-3 dB, and a steep curve turns that into double-digit score swings.
   if (speechLevel !== null) {
     const score = interpScore(speechLevel, [
-      [-45, 5], [-32, 40], [-24, 60], [-20, 85], [-14, 85], [-12, 60], [-10, 40], [-6, 15],
+      [-45, 5], [-34, 40], [-28, 60], [-23, 85], [-12, 85], [-10, 60], [-8, 40], [-5, 15],
     ]);
     const rating = ratingFromScore(score);
     metrics.push({
@@ -944,9 +974,11 @@ export function analyzeRecording(samples, sampleRate) {
   }
 
   // --- 8. True Peak / headroom (ITU-R BS.1770-5) ---
+  // Gentler slopes than the raw AES bands: true peak is a max statistic and
+  // naturally varies ~1 dB between takes.
   const dbtp = computeTruePeak(samples);
   {
-    const score = interpScore(dbtp, [[-6, 100], [-3, 80], [-1, 55], [0, 25]]);
+    const score = interpScore(dbtp, [[-8, 100], [-4, 85], [-1, 55], [0, 25]]);
     const rating = ratingFromScore(score);
     metrics.push({
       key: 'truepeak',
