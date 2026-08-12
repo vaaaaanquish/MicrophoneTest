@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=15';
-import { t, initI18n } from './i18n.js?v=15';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=16';
+import { t, initI18n } from './i18n.js?v=16';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -505,7 +505,7 @@ function renderResult(result, samples, sampleRate, { scroll = true } = {}) {
   if (scroll) {
     resultCard.scrollIntoView({ behavior: 'smooth' });
     // Fresh result only (not a language-switch re-render).
-    if (result.overallRating === 'excellent') celebrate();
+    if (result.overallRating === 'excellent' || result.overallRating === 'good') celebrate();
   }
 }
 
