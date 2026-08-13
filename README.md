@@ -38,3 +38,7 @@ python3 -m http.server 8765 --directory .
 ## Reference
 
 - [docs/RESEARCH.md](docs/RESEARCH.md) — the literature survey behind the metric design
+
+## License
+
+[MIT](LICENSE)
