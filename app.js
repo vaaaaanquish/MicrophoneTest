@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=23';
-import { t, initI18n } from './i18n.js?v=23';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=24';
+import { t, initI18n } from './i18n.js?v=24';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -470,6 +470,33 @@ function setShareHint(key) {
   el.textContent = key ? t(key) : '';
 }
 
+// The OS share sheet only lists social apps on phones/tablets — on desktop it
+// offers AirDrop/Mail/Notes and never X, which just gets in the way. So the
+// share sheet is reserved for touch devices; desktop goes straight to
+// "copy the card, open the composer".
+function usesShareSheet() {
+  if (!window.matchMedia('(hover: none) and (pointer: coarse)').matches) return false;
+  if (!navigator.canShare) return false;
+  try {
+    const probe = new File([new Blob([], { type: 'image/png' })], 'probe.png', { type: 'image/png' });
+    return navigator.canShare({ files: [probe] });
+  } catch {
+    return false;
+  }
+}
+
+function updateShareLabel() {
+  document.getElementById('share-btn').textContent = t(usesShareSheet() ? 'btn_share' : 'btn_share_copy');
+}
+
+function downloadShareCard() {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(shareBlob);
+  a.download = 'microphone-test.png';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
 async function shareResult() {
   if (!lastRender) return;
   const result = lastRender.result;
@@ -482,37 +509,40 @@ async function shareResult() {
     score: Math.round(result.overallScore),
     verdict: t(`rating_${result.overallRating}`),
   });
-  const file = new File([shareBlob], 'microphone-test.png', { type: 'image/png' });
 
-  // 1. Native share sheet with the image attached (mobile, Safari/Edge desktop).
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+  // Touch devices: hand the file to the OS share sheet, where the X app appears.
+  if (usesShareSheet()) {
+    const file = new File([shareBlob], 'microphone-test.png', { type: 'image/png' });
     try {
       await navigator.share({ files: [file], text: `${text}\n${SITE_URL}` });
       setShareHint(null);
       return;
     } catch (err) {
       if (err.name === 'AbortError') return; // user cancelled
-      // otherwise fall through to the clipboard/download path
+      // otherwise fall through to the clipboard path
     }
   }
 
-  // 2. X's intent URL cannot carry an image, so hand the user the image via the
-  //    clipboard (paste into the composer) and fall back to a download.
-  let hint = 'share_hint_download';
+  // Desktop: X's intent URL cannot carry an image, so put the card on the
+  // clipboard and open the composer for the user to paste into. Start the copy
+  // without awaiting it first — an await here can cost window.open the user
+  // gesture and get it blocked as a popup.
+  let copying = null;
   try {
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': shareBlob })]);
-    hint = 'share_hint_paste';
-  } catch {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(shareBlob);
-    a.download = 'microphone-test.png';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-  }
+    copying = navigator.clipboard.write([new ClipboardItem({ 'image/png': shareBlob })]);
+  } catch { /* clipboard API unavailable */ }
 
   const intent = `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(SITE_URL)}`;
   window.open(intent, '_blank', 'noopener');
-  setShareHint(hint);
+
+  try {
+    if (!copying) throw new Error('no clipboard');
+    await copying;
+    setShareHint('share_hint_paste');
+  } catch {
+    downloadShareCard();
+    setShareHint('share_hint_download');
+  }
 }
 
 // Confetti for good/excellent overall results. Lightweight canvas overlay,
@@ -726,12 +756,14 @@ document.getElementById('share-btn').addEventListener('click', shareResult);
 // i18n init: apply static texts + refresh dynamic texts on language switch.
 initI18n(() => {
   document.getElementById('methodology').innerHTML = getMethodologyHtml();
+  updateShareLabel();
   if (recording) recordBtn.textContent = t('btn_stop');
   if (lastRender && !resultCard.classList.contains('hidden')) {
     renderResult(lastRender.result, lastRender.samples, lastRender.sampleRate, { scroll: false });
   }
 });
 document.getElementById('methodology').innerHTML = getMethodologyHtml();
+updateShareLabel();
 
 // If permission was already granted, populate the device list on page load
 // and start the idle monitor right away.
