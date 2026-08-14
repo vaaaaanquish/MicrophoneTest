@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=28';
-import { t, initI18n, getLang } from './i18n.js?v=28';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=29';
+import { t, initI18n, getLang } from './i18n.js?v=29';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -601,10 +601,6 @@ function usesShareSheet() {
   }
 }
 
-function updateShareLabel() {
-  document.getElementById('share-btn').textContent = t(usesShareSheet() ? 'btn_share' : 'btn_share_copy');
-}
-
 function downloadShareCard() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(shareBlob);
@@ -876,14 +872,12 @@ document.getElementById('share-btn').addEventListener('click', shareResult);
 // i18n init: apply static texts + refresh dynamic texts on language switch.
 initI18n(() => {
   document.getElementById('methodology').innerHTML = getMethodologyHtml();
-  updateShareLabel();
   if (recording) recordBtn.textContent = t('btn_stop');
   if (lastRender && !resultCard.classList.contains('hidden')) {
     renderResult(lastRender.result, lastRender.samples, lastRender.sampleRate, { scroll: false });
   }
 });
 document.getElementById('methodology').innerHTML = getMethodologyHtml();
-updateShareLabel();
 
 // If permission was already granted, populate the device list on page load
 // and start the idle monitor right away.
