@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=24';
-import { t, initI18n } from './i18n.js?v=24';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=25';
+import { t, initI18n } from './i18n.js?v=25';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
