@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=25';
-import { t, initI18n } from './i18n.js?v=25';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=27';
+import { t, initI18n } from './i18n.js?v=27';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -385,8 +385,62 @@ function cardFont(weight, size) {
   return `${weight} ${size}px system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif`;
 }
 
+// Wraps text to `maxW`, returning at most `maxLines` lines (last one ellipsised
+// when text is left over). Breaks between words for Latin text and falls back to
+// per-character breaking for runs without spaces (i.e. Japanese).
+function wrapLines(ctx, text, maxW, maxLines) {
+  const tokens = text.match(/\S+\s*/g) || [];
+  const lines = [];
+  let line = '';
+  let truncated = false;
+  const pushLine = () => {
+    lines.push(line);
+    line = '';
+    return lines.length >= maxLines;
+  };
+
+  outer:
+  for (const token of tokens) {
+    if (ctx.measureText(line + token).width <= maxW) {
+      line += token;
+      continue;
+    }
+    if (line && ctx.measureText(token).width <= maxW) {
+      if (pushLine()) { truncated = true; break outer; }
+      line = token;
+      continue;
+    }
+    // The token alone overflows (a long word, or a whole CJK run): break it up.
+    for (const ch of token) {
+      if (line && ctx.measureText(line + ch).width > maxW) {
+        if (pushLine()) { truncated = true; break outer; }
+      }
+      line += ch;
+    }
+  }
+  if (line) {
+    if (lines.length < maxLines) lines.push(line);
+    else truncated = true;
+  }
+
+  if (truncated && lines.length) {
+    let last = lines[lines.length - 1].trimEnd();
+    while (last && ctx.measureText(last + '…').width > maxW) last = last.slice(0, -1);
+    lines[lines.length - 1] = last + '…';
+  }
+  return lines.map((l) => l.trimEnd());
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+}
+
+// Reproduces the on-page result view: score ring, verdict, and all nine metric
+// cards with their measured values, scores, meters and notes.
 function drawShareCard(result) {
-  const W = 1200, H = 630;
+  const W = 1600, H = 900;
+  const PAD = 50;
   const cv = document.createElement('canvas');
   cv.width = W;
   cv.height = H;
@@ -394,68 +448,130 @@ function drawShareCard(result) {
 
   ctx.fillStyle = '#0d0d0d';
   ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'alphabetic';
 
+  // Header
   ctx.fillStyle = '#ffffff';
-  ctx.font = cardFont(700, 38);
-  ctx.fillText('🎙️ Microphone Test', 60, 88);
+  ctx.font = cardFont(700, 32);
+  ctx.fillText('🎙️ Microphone Test', PAD, 72);
 
   const score = Math.round(result.overallScore);
   const color = RATING_COLORS[result.overallRating] || '#3987e5';
 
-  // Score ring (same geometry as the on-page conic-gradient ring).
-  const cx = 245, cy = 330, r = 118;
-  ctx.lineWidth = 22;
+  // Score ring
+  const cx = PAD + 88, cy = 218, r = 74;
+  ctx.lineWidth = 16;
   ctx.strokeStyle = '#2c2c2a';
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.stroke();
   ctx.strokeStyle = color;
+  ctx.lineCap = 'butt';
   ctx.beginPath();
   ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * score) / 100);
   ctx.stroke();
 
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffffff';
-  ctx.font = cardFont(700, 90);
-  ctx.fillText(String(score), cx, cy + 18);
+  ctx.font = cardFont(700, 58);
+  ctx.fillText(String(score), cx, cy + 12);
   ctx.fillStyle = '#898781';
-  ctx.font = cardFont(400, 26);
-  ctx.fillText('/ 100', cx, cy + 60);
+  ctx.font = cardFont(400, 18);
+  ctx.fillText('/ 100', cx, cy + 40);
 
+  // Verdict + MOS description, to the right of the ring
+  ctx.textAlign = 'left';
+  const vx = PAD + 200;
   ctx.fillStyle = color;
   ctx.font = cardFont(700, 40);
-  ctx.fillText(t(`rating_${result.overallRating}`), cx, cy + 165);
+  ctx.fillText(t(`rating_${result.overallRating}`) + (RATING_EMOJI[result.overallRating] || ''), vx, 200);
+  ctx.fillStyle = '#c3c2b7';
+  ctx.font = cardFont(400, 20);
+  const desc = t('overall_desc', {
+    mos: result.mos.toFixed(2),
+    desc: t(`desc_${result.overallRating}`),
+  });
+  wrapLines(ctx, desc, W - vx - PAD, 2).forEach((ln, i) => ctx.fillText(ln, vx, 240 + i * 28));
 
-  // Metrics in two columns, vertically centred against the score ring.
-  ctx.textAlign = 'left';
-  const colX = [520, 880];
-  const colW = 300;
-  const nameMaxW = 240; // leaves room for the right-aligned score
+  // Metric grid: 3 x 3, mirroring the on-page cards
+  const cols = 3, gap = 20;
+  const cardW = (W - PAD * 2 - gap * (cols - 1)) / cols;
+  const cardH = 150, gridY = 330;
   result.metrics.forEach((m, i) => {
-    const x = colX[Math.floor(i / 5)];
-    const y = 215 + (i % 5) * 66;
+    const x = PAD + (i % cols) * (cardW + gap);
+    const y = gridY + Math.floor(i / cols) * (cardH + 14);
+    const rc = RATING_COLORS[m.rating];
 
-    // Shrink the label if the locale makes it too wide (e.g. "Connection stability").
+    ctx.fillStyle = '#232322';
+    roundRect(ctx, x, y, cardW, cardH, 12);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    const ix = x + 20, iw = cardW - 40;
+
+    // Rating badge (drawn first so the name can be clipped against it)
+    const badge = t(`rating_${m.rating}`);
+    ctx.font = cardFont(650, 15);
+    const bw = ctx.measureText(badge).width + 24;
+    ctx.fillStyle = rc + '26'; // ~15% alpha
+    roundRect(ctx, x + cardW - 20 - bw, y + 16, bw, 26, 13);
+    ctx.fill();
+    ctx.fillStyle = rc;
+    ctx.textAlign = 'center';
+    ctx.fillText(badge, x + cardW - 20 - bw / 2, y + 34);
+    ctx.textAlign = 'left';
+
+    // Name (shrinks if the locale runs long)
     const name = t(m.nameKey);
-    let size = 23;
-    ctx.font = cardFont(500, size);
-    while (ctx.measureText(name).width > nameMaxW && size > 16) {
-      size -= 1;
-      ctx.font = cardFont(500, size);
+    const nameMaxW = iw - bw - 12;
+    let ns = 19;
+    ctx.font = cardFont(650, ns);
+    while (ctx.measureText(name).width > nameMaxW && ns > 13) {
+      ns -= 1;
+      ctx.font = cardFont(650, ns);
     }
     ctx.fillStyle = '#e8ecf4';
-    ctx.fillText(name, x, y);
+    ctx.fillText(name, ix, y + 34);
 
-    ctx.fillStyle = RATING_COLORS[m.rating];
-    ctx.font = cardFont(700, 23);
+    // Measured value + score
+    const valueParams = { ...(m.value.params || {}) };
+    if (m.value.labelKey) valueParams.label = t(m.value.labelKey);
+    const valueText = t(m.value.key, valueParams);
+    ctx.fillStyle = '#898781';
+    ctx.font = cardFont(600, 16);
     ctx.textAlign = 'right';
-    ctx.fillText(String(Math.round(m.score)), x + colW, y);
+    ctx.fillText(t('points', { n: Math.round(m.score) }), x + cardW - 20, y + 74);
     ctx.textAlign = 'left';
+
+    let vs = 22;
+    ctx.font = cardFont(650, vs);
+    while (ctx.measureText(valueText).width > iw - 70 && vs > 14) {
+      vs -= 1;
+      ctx.font = cardFont(650, vs);
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(valueText, ix, y + 74);
+
+    // Meter
+    ctx.fillStyle = '#2c2c2a';
+    roundRect(ctx, ix, y + 88, iw, 4, 2);
+    ctx.fill();
+    ctx.fillStyle = rc;
+    roundRect(ctx, ix, y + 88, Math.max(4, (iw * m.score) / 100), 4, 2);
+    ctx.fill();
+
+    // Note
+    ctx.fillStyle = '#898781';
+    ctx.font = cardFont(400, 14);
+    const note = t(m.note.key, m.note.params) + (m.note.extra ? ' ' + t(m.note.extra) : '');
+    wrapLines(ctx, note, iw, 2).forEach((ln, k) => ctx.fillText(ln, ix, y + 118 + k * 19));
   });
 
   ctx.fillStyle = '#898781';
-  ctx.font = cardFont(400, 23);
-  ctx.fillText('vaaaaanquish.github.io/MicrophoneTest', 60, H - 45);
+  ctx.font = cardFont(400, 19);
+  ctx.fillText('vaaaaanquish.github.io/MicrophoneTest', PAD, H - 32);
 
   return cv;
 }
