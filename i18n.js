@@ -17,6 +17,10 @@ const STR = {
     normalize: '音量を上げて再生',
     advice_title: '💡 改善ポイント',
     btn_retry: 'もう一度測定する',
+    btn_share: '𝕏 で結果をシェア',
+    share_text: 'マイクの音質スコアは {score}/100（{verdict}）でした。',
+    share_hint_paste: '結果画像をコピーしました。投稿画面で貼り付け（⌘V / Ctrl+V）してください。',
+    share_hint_download: '結果画像をダウンロードしました。投稿画面で添付してください。',
     methodology_summary: 'スコアリングの根拠について',
 
     status_quiet: '🤫 静かにしてください（背景ノイズを測定中）… 残り{s}秒',
@@ -136,6 +140,10 @@ const STR = {
     normalize: 'Boost playback volume',
     advice_title: '💡 How to improve',
     btn_retry: 'Measure again',
+    btn_share: 'Share on 𝕏',
+    share_text: 'My microphone quality score: {score}/100 ({verdict}).',
+    share_hint_paste: 'Result image copied — paste it (⌘V / Ctrl+V) into the post composer.',
+    share_hint_download: 'Result image downloaded — attach it in the post composer.',
     methodology_summary: 'About the scoring methodology',
 
     status_quiet: '🤫 Stay quiet (measuring background noise)… {s}s left',

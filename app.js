@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=20';
-import { t, initI18n } from './i18n.js?v=20';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=23';
+import { t, initI18n } from './i18n.js?v=23';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -372,6 +372,149 @@ let lastRender = null;
 // Emoji suffix for the overall verdict only (metric badges stay clean).
 const RATING_EMOJI = { excellent: ' 🎉', good: ' 🎉', fair: ' 💪', poor: ' 🌱' };
 
+// ---------- Share card ----------
+
+const SITE_URL = 'https://vaaaaanquish.github.io/MicrophoneTest/';
+const RATING_COLORS = { excellent: '#0ca30c', good: '#3987e5', fair: '#fab219', poor: '#d03b3b' };
+
+// Rendered ahead of the click: navigator.share() needs transient activation,
+// and awaiting canvas.toBlob() inside the handler can consume it.
+let shareBlob = null;
+
+function cardFont(weight, size) {
+  return `${weight} ${size}px system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif`;
+}
+
+function drawShareCard(result) {
+  const W = 1200, H = 630;
+  const cv = document.createElement('canvas');
+  cv.width = W;
+  cv.height = H;
+  const ctx = cv.getContext('2d');
+
+  ctx.fillStyle = '#0d0d0d';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = cardFont(700, 38);
+  ctx.fillText('🎙️ Microphone Test', 60, 88);
+
+  const score = Math.round(result.overallScore);
+  const color = RATING_COLORS[result.overallRating] || '#3987e5';
+
+  // Score ring (same geometry as the on-page conic-gradient ring).
+  const cx = 245, cy = 330, r = 118;
+  ctx.lineWidth = 22;
+  ctx.strokeStyle = '#2c2c2a';
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * score) / 100);
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = cardFont(700, 90);
+  ctx.fillText(String(score), cx, cy + 18);
+  ctx.fillStyle = '#898781';
+  ctx.font = cardFont(400, 26);
+  ctx.fillText('/ 100', cx, cy + 60);
+
+  ctx.fillStyle = color;
+  ctx.font = cardFont(700, 40);
+  ctx.fillText(t(`rating_${result.overallRating}`), cx, cy + 165);
+
+  // Metrics in two columns, vertically centred against the score ring.
+  ctx.textAlign = 'left';
+  const colX = [520, 880];
+  const colW = 300;
+  const nameMaxW = 240; // leaves room for the right-aligned score
+  result.metrics.forEach((m, i) => {
+    const x = colX[Math.floor(i / 5)];
+    const y = 215 + (i % 5) * 66;
+
+    // Shrink the label if the locale makes it too wide (e.g. "Connection stability").
+    const name = t(m.nameKey);
+    let size = 23;
+    ctx.font = cardFont(500, size);
+    while (ctx.measureText(name).width > nameMaxW && size > 16) {
+      size -= 1;
+      ctx.font = cardFont(500, size);
+    }
+    ctx.fillStyle = '#e8ecf4';
+    ctx.fillText(name, x, y);
+
+    ctx.fillStyle = RATING_COLORS[m.rating];
+    ctx.font = cardFont(700, 23);
+    ctx.textAlign = 'right';
+    ctx.fillText(String(Math.round(m.score)), x + colW, y);
+    ctx.textAlign = 'left';
+  });
+
+  ctx.fillStyle = '#898781';
+  ctx.font = cardFont(400, 23);
+  ctx.fillText('vaaaaanquish.github.io/MicrophoneTest', 60, H - 45);
+
+  return cv;
+}
+
+function prepareShareCard(result) {
+  shareBlob = null;
+  drawShareCard(result).toBlob((blob) => { shareBlob = blob; }, 'image/png');
+}
+
+function setShareHint(key) {
+  const el = document.getElementById('share-hint');
+  el.textContent = key ? t(key) : '';
+}
+
+async function shareResult() {
+  if (!lastRender) return;
+  const result = lastRender.result;
+  if (!shareBlob) {
+    // Clicked before the pre-render finished; drawing now costs the transient
+    // activation on some browsers, so this falls through to the clipboard path.
+    shareBlob = await new Promise((res) => drawShareCard(result).toBlob(res, 'image/png'));
+  }
+  const text = t('share_text', {
+    score: Math.round(result.overallScore),
+    verdict: t(`rating_${result.overallRating}`),
+  });
+  const file = new File([shareBlob], 'microphone-test.png', { type: 'image/png' });
+
+  // 1. Native share sheet with the image attached (mobile, Safari/Edge desktop).
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], text: `${text}\n${SITE_URL}` });
+      setShareHint(null);
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return; // user cancelled
+      // otherwise fall through to the clipboard/download path
+    }
+  }
+
+  // 2. X's intent URL cannot carry an image, so hand the user the image via the
+  //    clipboard (paste into the composer) and fall back to a download.
+  let hint = 'share_hint_download';
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': shareBlob })]);
+    hint = 'share_hint_paste';
+  } catch {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(shareBlob);
+    a.download = 'microphone-test.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+
+  const intent = `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(SITE_URL)}`;
+  window.open(intent, '_blank', 'noopener');
+  setShareHint(hint);
+}
+
 // Confetti for good/excellent overall results. Lightweight canvas overlay,
 // self-removing. "excellent" gets the big show: a center burst plus two
 // follow-up side cannons, more and larger pieces, longer lifetime.
@@ -530,6 +673,9 @@ function renderResult(result, samples, sampleRate, { scroll = true } = {}) {
     list.appendChild(li);
   }
 
+  prepareShareCard(result);
+  setShareHint(null);
+
   if (scroll) {
     resultCard.scrollIntoView({ behavior: 'smooth' });
     // Fresh result only (not a language-switch re-render).
@@ -575,6 +721,7 @@ retryBtn.addEventListener('click', () => {
   resultCard.classList.add('hidden');
   document.getElementById('record-card').scrollIntoView({ behavior: 'smooth' });
 });
+document.getElementById('share-btn').addEventListener('click', shareResult);
 
 // i18n init: apply static texts + refresh dynamic texts on language switch.
 initI18n(() => {

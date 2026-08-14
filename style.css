@@ -375,6 +375,14 @@ select:disabled { color: var(--ink-muted); }
 
 /* ---------- Results: advice ---------- */
 
+.result-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.share-hint { font-size: 0.82rem; color: var(--ink-muted); }
+
 .advice-section h3 { font-size: 0.95rem; margin: 0 0 12px; }
 
 #advice-list {
