@@ -19,8 +19,6 @@ const STR = {
     btn_retry: 'もう一度測定する',
     btn_share: '𝕏 で結果をシェア',
     share_text: 'マイクの音質スコアは {score}/100（{verdict}）でした。',
-    share_hint_paste: 'そのまま投稿するとスコアのカードが出ます。9指標入りの詳細版で投稿したいときは、投稿画面で貼り付け（⌘V / Ctrl+V）してください。',
-    share_hint_download: 'そのまま投稿するとスコアのカードが出ます。9指標入りの詳細版で投稿したいときは、ダウンロードした画像を添付してください。',
     methodology_summary: 'スコアリングの根拠について',
 
     status_quiet: '🤫 静かにしてください（背景ノイズを測定中）… 残り{s}秒',
@@ -142,8 +140,6 @@ const STR = {
     btn_retry: 'Measure again',
     btn_share: 'Share on 𝕏',
     share_text: 'My microphone quality score: {score}/100 ({verdict}).',
-    share_hint_paste: 'Posting as-is shows a score card. For the detailed nine-metric version, paste (⌘V / Ctrl+V) into the composer.',
-    share_hint_download: 'Posting as-is shows a score card. For the detailed nine-metric version, attach the downloaded image.',
     methodology_summary: 'About the scoring methodology',
 
     status_quiet: '🤫 Stay quiet (measuring background noise)… {s}s left',

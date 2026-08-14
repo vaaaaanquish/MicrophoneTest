@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=29';
-import { t, initI18n, getLang } from './i18n.js?v=29';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=30';
+import { t, initI18n, getLang } from './i18n.js?v=30';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -581,11 +581,6 @@ function prepareShareCard(result) {
   drawShareCard(result).toBlob((blob) => { shareBlob = blob; }, 'image/png');
 }
 
-function setShareHint(key) {
-  const el = document.getElementById('share-hint');
-  el.textContent = key ? t(key) : '';
-}
-
 // The OS share sheet only lists social apps on phones/tablets — on desktop it
 // offers AirDrop/Mail/Notes and never X, which just gets in the way. So the
 // share sheet is reserved for touch devices; desktop goes straight to
@@ -631,7 +626,6 @@ async function shareResult() {
     const file = new File([shareBlob], 'microphone-test.png', { type: 'image/png' });
     try {
       await navigator.share({ files: [file], text: `${text}\n${shareUrl}` });
-      setShareHint(null);
       return;
     } catch (err) {
       if (err.name === 'AbortError') return; // user cancelled
@@ -651,13 +645,13 @@ async function shareResult() {
   const intent = `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`;
   window.open(intent, '_blank', 'noopener');
 
+  // The link already carries a pre-rendered card, so a failed copy is not fatal:
+  // fall back to a download for anyone who wants the detailed image.
   try {
     if (!copying) throw new Error('no clipboard');
     await copying;
-    setShareHint('share_hint_paste');
   } catch {
     downloadShareCard();
-    setShareHint('share_hint_download');
   }
 }
 
@@ -820,7 +814,6 @@ function renderResult(result, samples, sampleRate, { scroll = true } = {}) {
   }
 
   prepareShareCard(result);
-  setShareHint(null);
 
   if (scroll) {
     resultCard.scrollIntoView({ behavior: 'smooth' });
