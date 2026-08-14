@@ -1,5 +1,5 @@
-import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=27';
-import { t, initI18n } from './i18n.js?v=27';
+import { analyzeRecording, getMethodologyHtml } from './analysis.js?v=28';
+import { t, initI18n, getLang } from './i18n.js?v=28';
 
 const micSelect = document.getElementById('mic-select');
 const permissionBtn = document.getElementById('permission-btn');
@@ -625,12 +625,16 @@ async function shareResult() {
     score: Math.round(result.overallScore),
     verdict: t(`rating_${result.overallRating}`),
   });
+  // Pre-rendered landing page for this score. Sharing it means the post still
+  // gets a card when the user doesn't paste the detailed image (X's crawler
+  // reads static og tags only, so one page per overall score is pre-built).
+  const shareUrl = `${SITE_URL}s/${getLang()}/${Math.round(result.overallScore)}/`;
 
   // Touch devices: hand the file to the OS share sheet, where the X app appears.
   if (usesShareSheet()) {
     const file = new File([shareBlob], 'microphone-test.png', { type: 'image/png' });
     try {
-      await navigator.share({ files: [file], text: `${text}\n${SITE_URL}` });
+      await navigator.share({ files: [file], text: `${text}\n${shareUrl}` });
       setShareHint(null);
       return;
     } catch (err) {
@@ -648,7 +652,7 @@ async function shareResult() {
     copying = navigator.clipboard.write([new ClipboardItem({ 'image/png': shareBlob })]);
   } catch { /* clipboard API unavailable */ }
 
-  const intent = `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(SITE_URL)}`;
+  const intent = `https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`;
   window.open(intent, '_blank', 'noopener');
 
   try {
